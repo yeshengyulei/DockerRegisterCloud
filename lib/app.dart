@@ -26,6 +26,7 @@ class BasePlatform {
 
 @JsonSerializable()
 class GlobalConfig {
+  int uploadChunckSize = 4 * 1024 * 1024;
   String userAgent = "Docker-Client/19.03.8-ce (linux)";
   String currentRepository;
   Map<String, String> repositoryCretificates = Map();

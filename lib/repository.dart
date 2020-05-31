@@ -120,42 +120,49 @@ class Repository {
     return await link(target.digest);
   }
 
+  Future<String> chunckUpload(StreamedRequest request, String repository,
+      String path, int offset, int size) async {
+    request.contentLength = size;
+    request.headers['repository'] = repository;
+    request.headers['Content-Range'] = "$offset-${offset + size - 1}";
+    request.headers['Content-Type'] = "application/octet-stream";
+    print("Chuncked Upload $offset $size $request");
+    File(path).openRead(offset, offset + size).listen((chunk) {
+      request.sink.add(chunk);
+    }, onDone: () {
+      request.sink.close();
+    });
+    StreamedResponse response = await client.send(request);
+    if (response.statusCode >= 300 || response.statusCode < 200) {
+      String body = await response.stream.transform(utf8.decoder).join();
+      throw "Repository chunck upload status code ${response.statusCode} ${response.headers} $body";
+    }
+    print("Chuncked Upload Done $offset $size ${response.headers['location']}");
+    return response.headers['location'];
+  }
+
   Future<void> upload(Translation translation, String name, String path,
       TransportProgressListener listener) async {
     String url = await beginUpload(translation);
-    String hash =
-        (await sha256.bind(File(path).openRead()).firstWhere((d) => true))
-            .toString();
-    Uri uploadUri = Uri.parse("$url&digest=sha256:$hash");
-    HttpClient httpClient = HttpClient();
-    HttpClientRequest request = await httpClient.putUrl(uploadUri);
-    request.headers.set("User-Agent", config.userAgent);
-    request.headers.set("Content-Type", "application/octet-stream");
-    if (client.cachedTokens.containsKey(translation.repository)) {
-      request.headers.set("Authorization",
-          "Bearer ${client.cachedTokens[translation.repository]}");
-    }
-    request.contentLength = await File(path).length();
     var length = await File(path).length();
-    var sink = File(path).openRead();
-    var received = 0;
-    var timer = Timer.periodic(Duration(milliseconds: 500), (timer) {
-      listener.onProgess(received, length);
-    });
-    await request.addStream(sink.map((s) {
-      received += s.length;
-      return s;
-    }));
-    HttpClientResponse response = await request.close();
-    if (response.statusCode >= 300 || response.statusCode < 200) {
-      String body = await response.transform(utf8.decoder).join();
-      throw "Repository upload status code ${response.statusCode} ${response.headers} $body";
+    var offset = 0;
+    var futures = <Future>[];
+    futures.add(sha256.bind(File(path).openRead()).firstWhere((d) => true));
+    while (length - offset > config.uploadChunckSize) {
+      Uri uploadUri = Uri.parse("$url");
+      url = await chunckUpload(StreamedRequest('PATCH', uploadUri),
+          translation.repository, path, offset, config.uploadChunckSize);
+      offset += config.uploadChunckSize;
     }
-    timer.cancel();
+    Digest result = (await Future.wait(futures)).first;
+    String hash = result.toString();
+    Uri latestUploadUri = Uri.parse("$url&digest=sha256:$hash");
+    await chunckUpload(StreamedRequest('PUT', latestUploadUri),
+        translation.repository, path, offset, length - offset);
     listener.onSuccess(length);
     FileItem fileItem = FileItem();
     fileItem.name = name;
-    fileItem.size = request.contentLength;
+    fileItem.size = length;
     fileItem.digest = "sha256:$hash";
     translation.config.fileItems.add(fileItem);
   }
