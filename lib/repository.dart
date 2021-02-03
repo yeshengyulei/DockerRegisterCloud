@@ -76,21 +76,54 @@ class Repository {
         body: json.encode(manifest));
     cachedFiles.remove(translation.repository);
     if (response.statusCode >= 300 || response.statusCode < 200) {
-      throw "Repository start upload status code ${response.statusCode} ${response.body}";
+      throw "Repository put manifests status code ${response.statusCode} ${response.body}";
     }
   }
 
+  Future<void> rename(Translation translation, String originName, String targetName) async {
+    if (!targetName.startsWith("/") || targetName.contains("*") || targetName.contains("//")) {
+      throw "targetName [$targetName] must not contains * or // and start with /";
+    }
+    if(translation.config.fileItems.firstWhere((element) => element.name == targetName, orElse: () => null) != null){
+      throw "targetName [$targetName] already exists in repository";
+    }
+    FileItem item = translation.config.fileItems.firstWhere((element) => element.name == originName, orElse: () => null);
+    if(item == null){
+      throw "originName [$originName] not found in repository";
+    }
+    item.name = targetName;
+  }
+  
+
   Future<void> remove(Translation translation, String name) async {
-    FileItem target;
-    for (FileItem item in translation.config.fileItems) {
-      if (item.name == name) {
-        target = item;
+    Set<String> originHashs =
+        await Stream.fromIterable(translation.config.fileItems)
+            .map((event) => event.digest)
+            .toSet();
+    int originSize = translation.config.fileItems.length;
+    translation.config.fileItems.removeWhere((item) =>
+        item.name == name ||
+        (item.name.startsWith(name) && name.endsWith("/")) ||
+        name == '*');
+    Set<String> currentHashs =
+        await Stream.fromIterable(translation.config.fileItems)
+            .map((event) => event.digest)
+            .toSet();
+    int currentSize = translation.config.fileItems.length;
+    if (originSize == currentSize) {
+      throw "No file match $name";
+    }
+    // originHashs -> removedHashs
+    originHashs.removeAll(currentHashs);
+    originHashs.forEach((element) async {
+      Response response = await client.delete(
+          "https://${translation.server}/v2/${translation.name}/blobs/${element}",
+          headers: {"repository": translation.repository});
+      if (response.statusCode >= 300 || response.statusCode < 200) {
+        print(
+            "Repository delete status code ${response.statusCode} ${response.body}");
       }
-    }
-    if (target == null) {
-      throw "File item not found $name";
-    }
-    translation.config.fileItems.remove(target);
+    });
   }
 
   Future<void> pullWithName(Translation translation, String name, String path,
@@ -122,13 +155,14 @@ class Repository {
 
   Future<void> upload(Translation translation, String name, String path,
       TransportProgressListener listener) async {
+    if (!name.startsWith("/") || name.contains("*") || name.contains("//")) {
+      throw "name [$name] must not contains * or // and start with /";
+    }
     String url = await beginUpload(translation);
-    String hash =
-        (await sha256.bind(File(path).openRead()).firstWhere((d) => true))
-            .toString();
-    Uri uploadUri = Uri.parse("$url&digest=sha256:$hash");
+    Future<Digest> hashFuture = sha256.bind(File(path).openRead()).first;
+    Uri uploadUri = Uri.parse("$url");
     HttpClient httpClient = HttpClient();
-    HttpClientRequest request = await httpClient.putUrl(uploadUri);
+    HttpClientRequest request = await httpClient.patchUrl(uploadUri);
     request.headers.set("User-Agent", config.userAgent);
     request.headers.set("Content-Type", "application/octet-stream");
     if (client.cachedTokens.containsKey(translation.repository)) {
@@ -150,6 +184,14 @@ class Repository {
     if (response.statusCode >= 300 || response.statusCode < 200) {
       String body = await response.transform(utf8.decoder).join();
       throw "Repository upload status code ${response.statusCode} ${response.headers} $body";
+    }
+    url = response.headers.value("location");
+    String hash = (await hashFuture).toString();
+    Response completeResponse = await client.put("$url&digest=sha256:$hash",
+        headers: {"repository": translation.repository});
+    if (completeResponse.statusCode >= 300 ||
+        completeResponse.statusCode < 200) {
+      throw "Repository start upload status code ${completeResponse.statusCode} ${completeResponse.body}";
     }
     timer.cancel();
     listener.onSuccess(length);

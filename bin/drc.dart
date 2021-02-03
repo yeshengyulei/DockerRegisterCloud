@@ -7,11 +7,11 @@ import 'package:docker_register_cloud/helper/DrcHttpClient.dart';
 import 'package:docker_register_cloud/repository.dart';
 import 'package:filesize/filesize.dart';
 
-void main(List<String> args) async {
+main(List<String> args) async {
   BasePlatform platform = BasePlatform();
   GlobalConfig config = GlobalConfig();
   dynamic configContent = await platform.load('config');
-  if(configContent != null){
+  if (configContent != null) {
     config = GlobalConfig.fromJson(configContent);
   }
   AuthManager auth = AuthManager(platform, config);
@@ -21,34 +21,37 @@ void main(List<String> args) async {
   parser.addFlag('help',
       abbr: 'h', negatable: false, help: "Displays this help information.");
   parser.addCommand("login")
-    ..addSeparator("Log in to a Docker registry.\nbrc login <repository>")
+    ..addSeparator("Log in to a Docker registry.\ndrc login <repository>")
     ..addOption("username", abbr: "u", help: "Specify username.")
     ..addOption("password",
         abbr: "p",
         help: "Specify a password, only recommended for batch processing.");
   parser.addCommand("push").addSeparator(
-      "Upload a file to the current repository.\nbrc push <path> <name>");
+      "Upload a file to the current repository.\ndrc push <path> <name>");
   parser.addCommand("pull").addSeparator(
-      "Download a file from the current repository.\nbrc pull <name> <path>");
+      "Download a file from the current repository.\ndrc pull <name> <path>");
   parser
       .addCommand("ls")
-      .addSeparator("List the current repository file list.\nbrc list");
+      .addSeparator("List the current repository file list.\ndrc list");
+  parser
+      .addCommand("mv")
+      .addSeparator("rename a file from the current repository.\ndrc mv <originName> <targetName>");
   parser.addCommand("use").addSeparator(
-      "Switch current repository.\nbrc use <repository>\teg. brc use registry-1.docker.io/xausky/public");
-  parser.addCommand("repos").addSeparator("List repository list.\nbrc repos");
+      "Switch current repository.\ndrc use <repository>\teg. drc use registry-1.docker.io/xausky/public");
+  parser.addCommand("repos").addSeparator("List repository list.\ndrc repos");
   parser.addCommand("rmr").addSeparator(
-      "Remove repository from repository list.\nbrc rmr <repository>");
+      "Remove repository from repository list.\ndrc rmr <repository>");
   parser
       .addCommand("link")
-      .addSeparator("Direct download address of file.\nbrc link <name>");
+      .addSeparator("Direct download address of file.\ndrc link <name>");
   parser.addCommand("rm").addSeparator(
-      "Remove a file from the current repository.\nbrc rm <name>");
+      "Remove a file from the current repository.\ndrc rm <name>");
   parser.addSeparator(
-      'Use "brc [command] --help" for more information about a command.');
+      'Use "drc [command] --help" for more information about a command.');
   var result = parser.parse(args);
   if (result['help'] || result.command == null) {
     if (result.command == null) {
-      print("brc -- Network disk client based on docker register protocol.\n");
+      print("drc -- Network disk client based on docker register protocol.\n");
       print("Commands:");
       parser.commands.forEach((key, cmd) {
         print("  $key");
@@ -78,8 +81,11 @@ void main(List<String> args) async {
       break;
     case "push":
       Translation translation = await repository.begin();
-      await repository.upload(translation, result.command.arguments[1],
-          result.command.arguments[0], PrintUploadTransportProgressListener(result.command.arguments[1]));
+      await repository.upload(
+          translation,
+          result.command.arguments[1],
+          result.command.arguments[0],
+          PrintUploadTransportProgressListener(result.command.arguments[1]));
       await repository.commit(translation);
       break;
     case "ls":
@@ -90,11 +96,19 @@ void main(List<String> args) async {
         print("${item.digest}  $fileSizeText  ${item.name}");
       }
       break;
+    case "mv":
+      Translation translation = await repository.begin();
+      await repository.rename(translation, result.command.arguments[0], result.command.arguments[1]);
+      await repository.commit(translation);
+      break;
     case "pull":
       int start = DateTime.now().millisecondsSinceEpoch;
       Translation translation = await repository.begin();
-      await repository.pullWithName(translation, result.command.arguments[0],
-          result.command.arguments[1], PrintDownloadTransportProgressListener(result.command.arguments[0]));
+      await repository.pullWithName(
+          translation,
+          result.command.arguments[0],
+          result.command.arguments[1],
+          PrintDownloadTransportProgressListener(result.command.arguments[0]));
       int end = DateTime.now().millisecondsSinceEpoch;
       int size = await File(result.command.arguments[1]).length();
       num time = (end - start) / 1000;
@@ -131,7 +145,7 @@ class PrintDownloadTransportProgressListener extends TransportProgressListener {
   final String name;
   int start;
 
-  PrintDownloadTransportProgressListener(this.name){
+  PrintDownloadTransportProgressListener(this.name) {
     this.start = DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -139,14 +153,16 @@ class PrintDownloadTransportProgressListener extends TransportProgressListener {
   void onProgess(int current, int total) {
     var end = DateTime.now().millisecondsSinceEpoch;
     var speed = (current / (end - start) * 1000).round();
-    print("Downloading $name received ${filesize(current)} total ${filesize(total)} speed ${filesize(speed)}/s");
+    print(
+        "Downloading $name received ${filesize(current)} total ${filesize(total)} speed ${filesize(speed)}/s");
   }
 
   @override
   void onSuccess(int total) {
     var end = DateTime.now().millisecondsSinceEpoch;
     var speed = (total / (end - start) * 1000).round();
-    print("Downloaded $name total ${filesize(total)} speed ${filesize(speed)}/s");
+    print(
+        "Downloaded $name total ${filesize(total)} speed ${filesize(speed)}/s");
   }
 }
 
@@ -154,7 +170,7 @@ class PrintUploadTransportProgressListener extends TransportProgressListener {
   final String name;
   int start;
 
-  PrintUploadTransportProgressListener(this.name){
+  PrintUploadTransportProgressListener(this.name) {
     this.start = DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -162,7 +178,8 @@ class PrintUploadTransportProgressListener extends TransportProgressListener {
   void onProgess(int current, int total) {
     var end = DateTime.now().millisecondsSinceEpoch;
     var speed = (current / (end - start) * 1000).round();
-    print("Uploading $name received ${filesize(current)} total ${filesize(total)} speed ${filesize(speed)}/s");
+    print(
+        "Uploading $name uploaded ${filesize(current)} total ${filesize(total)} speed ${filesize(speed)}/s");
   }
 
   @override
